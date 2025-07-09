@@ -1,0 +1,411 @@
+---
+title: "tubes ssd"
+author: "Farrel Julio Akbar"
+date: "2025-05-21"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r}
+library(class)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(GGally)
+library(tidyr)
+library(ROSE)
+```
+
+# ----------------------------------------
+# 1. Ambil Data
+# ----------------------------------------
+```{r}
+df <- read.csv("C:/Users/Farrel Julio/OneDrive/ドキュメント/SSD/SSD 2025/DATASET/rumahbalam_kategorik_strategis.csv")
+features <- c('Jarakm', 'LuasBangunanm2', 'LuasTanahm2',
+              'KamarTidur', 'KamarMandi', 'Garasi',
+              'DayaListrik.Watt')
+target <- "LokasiStrategis"
+```
+
+# ----------------------------------------
+# 2. Cek NA dan Duplikasi
+# ----------------------------------------
+```{r}
+sum(is.na(df))
+sum(duplicated(df))
+```
+```{r}
+df %>%
+  group_by(LokasiStrategis) %>%
+  summarise(across(all_of(features), list(mean = mean, sd = sd), na.rm = TRUE))
+```
+
+# ----------------------------------------
+# 3. Cek Persebaran Data
+# ----------------------------------------
+```{r}
+for (feature in features) {
+  print(
+    ggplot(df, aes_string(x = feature)) +
+      geom_histogram(fill = "steelblue", bins = 30, color = "black") +
+      labs(title = paste("Histogram dari", feature)) +
+      theme_minimal()
+  )
+}
+
+ggpairs(df[, features], title = "Scatter Plot Matrix antar Fitur Numerik")
+
+for (feature in features) {
+  print(
+    ggplot(df, aes_string(x = target, y = feature, fill = target)) +
+      geom_boxplot() +
+      labs(title = paste("Boxplot", feature, "berdasarkan LokasiStrategis")) +
+      theme_minimal()
+  )
+}
+```
+```{r}
+ggplot(df, aes(x = LokasiStrategis, fill = LokasiStrategis)) +
+  geom_bar() +
+  labs(title = "Distribusi Kategori LokasiStrategis",
+       x = "Kategori", y = "Jumlah") +
+  theme_minimal()
+```
+
+# ----------------------------------------
+# 4. Normalisasi dan Split Data
+# ----------------------------------------
+```{r}
+df_scaled <- df
+df_scaled[features] <- scale(df[features])
+
+set.seed(42)
+splitIndex <- createDataPartition(df_scaled[[target]], p = 0.8, list = FALSE)
+train_data <- df_scaled[splitIndex, ]
+test_data <- df_scaled[-splitIndex, ]
+
+train_X <- train_data[, features]
+train_Y <- train_data[[target]]
+test_X <- test_data[, features]
+test_Y <- test_data[[target]]
+```
+
+# ----------------------------------------
+# 5. Klasifikasi KNN k=1 s/d 10 dan Evaluasi
+# ----------------------------------------
+```{r}
+eval_metrics <- function(actual, predicted) {
+  cm <- table(Actual = actual, Predicted = predicted)
+  tp <- cm["Ya", "Ya"]
+  tn <- cm["Tidak", "Tidak"]
+  fn <- cm["Ya", "Tidak"]
+  fp <- cm["Tidak", "Ya"]
+  acc <- (tp + tn) / sum(cm)
+  sens <- tp / (tp + fn)
+  spec <- tn / (tn + fp)
+  prec <- ifelse(tp + fp == 0, 0, tp / (tp + fp))
+  f1 <- ifelse((prec + sens) == 0, 0, 2 * prec * sens / (prec + sens))
+  return(c(accuracy = acc, sensitivity = sens, specificity = spec, f1_score = f1))
+}
+
+results <- data.frame()
+for (k in 1:10) {
+  pred_train <- knn(train = train_X, test = train_X, cl = train_Y, k = k)
+  pred_test <- knn(train = train_X, test = test_X, cl = train_Y, k = k)
+  train_metrics <- eval_metrics(train_Y, pred_train)
+  test_metrics <- eval_metrics(test_Y, pred_test)
+  results <- rbind(results, data.frame(
+    k = k,
+    TrainAccuracy = train_metrics["accuracy"],
+    TestAccuracy = test_metrics["accuracy"],
+    TrainSensitivity = train_metrics["sensitivity"],
+    TestSensitivity = test_metrics["sensitivity"],
+    TrainSpecificity = train_metrics["specificity"],
+    TestSpecificity = test_metrics["specificity"],
+    TestF1Score = test_metrics["f1_score"]
+  ))
+}
+print(results)
+```
+
+# ----------------------------------------
+# 6. Visualisasi Akurasi
+# ----------------------------------------
+```{r}
+ggplot(results, aes(x = k)) +
+  geom_line(aes(y = TrainAccuracy, color = "Train Accuracy"), size = 1.2) +
+  geom_line(aes(y = TestAccuracy, color = "Test Accuracy"), size = 1.2) +
+  geom_point(aes(y = TrainAccuracy, color = "Train Accuracy"), size = 2) +
+  geom_point(aes(y = TestAccuracy, color = "Test Accuracy"), size = 2) +
+  scale_color_manual(values = c("Train Accuracy" = "blue", "Test Accuracy" = "red")) +
+  labs(title = "Akurasi KNN pada Data Latih vs Uji", x = "Jumlah Tetangga (k)", y = "Akurasi") +
+  theme_minimal()
+```
+
+# ----------------------------------------
+# 7. Resampling: Undersampling dengan ROSE
+# ----------------------------------------
+```{r}
+train_balanced <- ovun.sample(LokasiStrategis ~ ., data = df, method = "under", N = 2 * min(table(df$LokasiStrategis)))$data
+```
+
+```{r}
+ggplot(train_balanced, aes(x = LokasiStrategis, fill = LokasiStrategis)) +
+  geom_bar() +
+  labs(title = "Distribusi Kelas Setelah Resampling (ROSE)",
+       x = "Lokasi Strategis",
+       y = "Jumlah") +
+  theme_minimal()
+```
+
+```{r}
+train_X_bal <- scale(train_balanced[, features])
+train_Y_bal <- train_balanced$LokasiStrategis
+
+test_X <- scale(test_data[, features])
+test_Y <- test_data$LokasiStrategis
+```
+
+```{r}
+knn_bal_results <- data.frame()
+
+for (k in 1:10) {
+  pred_test <- knn(train = train_X_bal, test = test_X, cl = train_Y_bal, k = k)
+  m <- eval_metrics(test_Y, pred_test)
+  knn_bal_results <- rbind(knn_bal_results, data.frame(
+    k = k,
+    Accuracy = m["accuracy"],
+    Sensitivity = m["sensitivity"],
+    Specificity = m["specificity"],
+    F1_Score = m["f1_score"]
+  ))
+}
+
+print(knn_bal_results)
+```
+
+```{r}
+ggplot(knn_bal_results, aes(x = k)) +
+  geom_line(aes(y = Accuracy, color = "Accuracy")) +
+  geom_line(aes(y = Sensitivity, color = "Sensitivity")) +
+  geom_line(aes(y = Specificity, color = "Specificity")) +
+  geom_line(aes(y = F1_Score, color = "F1 Score")) +
+  geom_point(aes(y = Accuracy, color = "Accuracy")) +
+  geom_point(aes(y = Sensitivity, color = "Sensitivity")) +
+  geom_point(aes(y = Specificity, color = "Specificity")) +
+  geom_point(aes(y = F1_Score, color = "F1 Score")) +
+  labs(title = "Evaluasi KNN (Setelah Resampling)", x = "k", y = "Nilai Metrik", color = "Metrik") +
+  theme_minimal()
+```
+# ----------------------------------------
+# 8. Visualisasi Tambahan: Scatter, Boundary, Perbandingan, Confusion Matrix
+# ----------------------------------------
+```{r}
+# SCATTER PLOT dengan pewarnaan berdasarkan kelas
+ggplot(df, aes(x = Jarakm, y = LuasBangunanm2, color = LokasiStrategis)) +
+  geom_point(size = 2) +
+  scale_color_manual(values = c("Tidak" = "#1f78b4", "Ya" = "#a6cee3")) +
+  labs(title = "Scatter Plot: Jarak vs Luas Bangunan", x = "Jarak (m)", y = "Luas Bangunan (m2)") +
+  theme_minimal()
+
+```
+
+```{r}
+# SCATTER PLOT dengan pewarnaan berdasarkan kelas
+ggplot(df, aes(x = Harga, y = LuasBangunanm2, color = LokasiStrategis)) +
+  geom_point(size = 2) +
+  scale_color_manual(values = c("Tidak" = "#1f78b4", "Ya" = "#a6cee3")) +
+  labs(title = "Scatter Plot: Harga vs Luas Bangunan", x = "Harga", y = "Luas Bangunan (m2)") +
+  theme_minimal()
+
+```
+
+```{r}
+# DECISION BOUNDARY (menggunakan 2 fitur untuk plot: Jarakm & LuasBangunanm2)
+library(ggplot2)
+set.seed(123)
+
+df_simple <- df[, c("Jarakm", "LuasBangunanm2", "LokasiStrategis")]
+df_simple_scaled <- df_simple
+scaler_simple <- scale(df_simple[, 1:2])
+df_simple_scaled[, 1:2] <- scaler_simple
+
+model_knn <- knn3(LokasiStrategis ~ ., data = df_simple_scaled, k = 5)
+
+x_min <- min(df_simple_scaled$Jarakm) - 0.5
+x_max <- max(df_simple_scaled$Jarakm) + 0.5
+y_min <- min(df_simple_scaled$LuasBangunanm2) - 0.5
+y_max <- max(df_simple_scaled$LuasBangunanm2) + 0.5
+
+grid <- expand.grid(
+  Jarakm = seq(x_min, x_max, length.out = 200),
+  LuasBangunanm2 = seq(y_min, y_max, length.out = 200)
+)
+grid$pred <- predict(model_knn, grid, type = "class")
+
+ggplot() +
+  geom_tile(data = grid, aes(x = Jarakm, y = LuasBangunanm2, fill = pred), alpha = 0.3) +
+  geom_point(data = df_simple_scaled, aes(x = Jarakm, y = LuasBangunanm2, color = LokasiStrategis), size = 2) +
+  scale_fill_manual(values = c("Tidak" = "#1f78b4", "Ya" = "#a6cee3")) +
+  scale_color_manual(values = c("Tidak" = "#1f78b4", "Ya" = "#a6cee3")) +
+  labs(title = "Heatmap Decision Boundary (KNN)", x = "Jarak (scaled)", y = "Luas Bangunan (scaled)") +
+  theme_minimal()
+```
+```{r}
+# DECISION BOUNDARY (menggunakan 2 fitur untuk plot: Harga & LuasBangunanm2)
+library(ggplot2)
+set.seed(123)
+
+df_simple <- df[, c("Harga", "LuasBangunanm2", "LokasiStrategis")]
+df_simple_scaled <- df_simple
+scaler_simple <- scale(df_simple[, 1:2])
+df_simple_scaled[, 1:2] <- scaler_simple
+
+model_knn <- knn3(LokasiStrategis ~ ., data = df_simple_scaled, k = 5)
+
+x_min <- min(df_simple_scaled$Harga) - 0.5
+x_max <- max(df_simple_scaled$Harga) + 0.5
+y_min <- min(df_simple_scaled$LuasBangunanm2) - 0.5
+y_max <- max(df_simple_scaled$LuasBangunanm2) + 0.5
+
+grid <- expand.grid(
+  Harga = seq(x_min, x_max, length.out = 200),
+  LuasBangunanm2 = seq(y_min, y_max, length.out = 200)
+)
+grid$pred <- predict(model_knn, grid, type = "class")
+
+ggplot() +
+  geom_tile(data = grid, aes(x = Harga, y = LuasBangunanm2, fill = pred), alpha = 0.3) +
+  geom_point(data = df_simple_scaled, aes(x = Harga, y = LuasBangunanm2, color = LokasiStrategis), size = 2) +
+  scale_fill_manual(values = c("Tidak" = "#1f78b4", "Ya" = "#a6cee3")) +
+  scale_color_manual(values = c("Tidak" = "#1f78b4", "Ya" = "#a6cee3")) +
+  labs(title = "Heatmap Decision Boundary (KNN)", x = "Harga", y = "Luas Bangunan (scaled)") +
+  theme_minimal()
+```
+
+```{r}
+
+# LINE PLOT Perbandingan METRIK antara RESAMPLING & TANPA
+results_long <- results %>%
+  select(k, TestAccuracy, TestSensitivity, TestSpecificity, TestF1Score) %>%
+  rename(Accuracy = TestAccuracy, Sensitivity = TestSensitivity, Specificity = TestSpecificity, F1_Score = TestF1Score) %>%
+  mutate(Method = "Tanpa Resampling")
+
+knn_bal_results$Method <- "Dengan Resampling"
+colnames(knn_bal_results) <- c("k", "Accuracy", "Sensitivity", "Specificity", "F1_Score", "Method")
+
+combined <- bind_rows(results_long, knn_bal_results)
+
+ggplot(combined, aes(x = k, y = Accuracy, color = Method)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  labs(title = "Perbandingan Akurasi: Dengan vs Tanpa Resampling", x = "Nilai k", y = "Akurasi") +
+  theme_minimal() +
+  scale_color_manual(values = c("#1f78b4", "#a6cee3"))
+```
+
+```{r}
+# GROUPED BARPLOT untuk perbandingan pada k = 5
+results_k5 <- results %>% filter(k == 5) %>% select(TestAccuracy, TestSensitivity, TestSpecificity, TestF1Score)
+resample_k5 <- knn_bal_results %>% filter(k == 5) %>% select(Accuracy, Sensitivity, Specificity, F1_Score)
+
+metric_df <- data.frame(
+  Metrik = c("Accuracy", "Sensitivity", "Specificity", "F1-Score"),
+  Tanpa = as.numeric(results_k5),
+  Dengan = as.numeric(resample_k5)
+)
+
+metric_long <- pivot_longer(metric_df, cols = c("Tanpa", "Dengan"), names_to = "Metode", values_to = "Nilai")
+
+ggplot(metric_long, aes(x = Metrik, y = Nilai, fill = Metode)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("Tanpa" = "#1f78b4", "Dengan" = "#a6cee3")) +
+  labs(title = "Perbandingan Kinerja Model pada k = 5", y = "Nilai", x = "Metrik") +
+  theme_minimal()
+
+```
+
+```{r}
+# CONFUSION MATRIX: Tanpa Resampling
+pred_best <- knn(train = train_X, test = test_X, cl = train_Y, k = 5)
+test_Y <- factor(test_Y)
+pred_best <- factor(pred_best, levels = levels(test_Y))
+cm1 <- confusionMatrix(pred_best, test_Y)
+cm1$table
+```
+
+```{r}
+# CONFUSION MATRIX: Dengan Resampling
+pred_bal_best <- knn(train = train_X_bal, test = test_X, cl = train_Y_bal, k = 5)
+test_Y <- factor(test_Y)
+pred_bal_best <- factor(pred_bal_best, levels = levels(test_Y))
+cm2 <- confusionMatrix(pred_bal_best, test_Y)
+cm2$table
+```
+
+# ----------------------------------------
+# Tambahkan MCC ke fungsi evaluasi
+# ----------------------------------------
+```{r}
+eval_metrics <- function(actual, predicted) {
+  actual <- factor(actual, levels = c("Tidak", "Ya"))
+  predicted <- factor(predicted, levels = c("Tidak", "Ya"))
+  cm <- table(Actual = actual, Predicted = predicted)
+  tp <- cm["Ya", "Ya"]
+  tn <- cm["Tidak", "Tidak"]
+  fn <- cm["Ya", "Tidak"]
+  fp <- cm["Tidak", "Ya"]
+  acc <- (tp + tn) / sum(cm)
+  sens <- ifelse(tp + fn == 0, 0, tp / (tp + fn))
+  spec <- ifelse(tn + fp == 0, 0, tn / (tn + fp))
+  prec <- ifelse(tp + fp == 0, 0, tp / (tp + fp))
+  f1 <- ifelse((prec + sens) == 0, 0, 2 * prec * sens / (prec + sens))
+  mcc <- ifelse((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn) == 0, 0,
+                (tp * tn - fp * fn) / sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)))
+  return(c(accuracy = acc, sensitivity = sens, specificity = spec, f1_score = f1, mcc = mcc))
+}
+```
+
+# ----------------------------------------
+# Visualisasi MCC untuk Tanpa dan Dengan Resampling
+# ----------------------------------------
+```{r}
+# Tambahkan perhitungan MCC ke results dan knn_bal_results jika belum ada
+results$TestMCC <- numeric(nrow(results))
+knn_bal_results$MCC <- numeric(nrow(knn_bal_results))
+
+for (i in 1:nrow(results)) {
+  results$TestMCC[i] <- eval_metrics(test_Y, 
+    knn(train = train_X, test = test_X, cl = train_Y, k = results$k[i]))["mcc"]
+}
+
+for (i in 1:nrow(knn_bal_results)) {
+  knn_bal_results$MCC[i] <- eval_metrics(test_Y, 
+    knn(train = train_X_bal, test = test_X, cl = train_Y_bal, k = knn_bal_results$k[i]))["mcc"]
+}
+
+# Gabungkan dan visualisasikan
+mcc_results <- data.frame(
+  k = results$k,
+  MCC_Tanpa = results$TestMCC,
+  MCC_Dengan = knn_bal_results$MCC
+)
+
+mcc_long <- pivot_longer(mcc_results, cols = c("MCC_Tanpa", "MCC_Dengan"),
+                         names_to = "Metode", values_to = "MCC")
+
+mcc_long$Metode <- recode(mcc_long$Metode,
+                          "MCC_Tanpa" = "Tanpa Resampling",
+                          "MCC_Dengan" = "Dengan Resampling")
+mcc_results
+ggplot(mcc_long, aes(x = k, y = MCC, color = Metode)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  labs(title = "Perbandingan MCC: Dengan vs Tanpa Resampling", x = "Nilai k", y = "MCC") +
+  theme_minimal() +
+  scale_color_manual(values = c("Tanpa Resampling" = "#1f78b4", "Dengan Resampling" = "#a6cee3"))
+```
+
+
+
