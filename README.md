@@ -1,6 +1,6 @@
 # 🏠 Strategic Housing Location Classification with KNN
 
-[![Status](https://img.shields.io/badge/Project-OnProgres-brightgreen)](https://github.com/Julio-analyst)
+[![Status](https://img.shields.io/badge/Project-Completed-brightgreen)](https://github.com/Julio-analyst)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Made With](https://img.shields.io/badge/Made%20with-R-1f78b4?logo=r)
 ![MCC](https://img.shields.io/badge/MCC-Improved%20(0.05%20→%200.60)-blueviolet)
